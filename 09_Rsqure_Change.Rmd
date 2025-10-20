@@ -1,0 +1,273 @@
+---
+title: "R_square_Chang"
+author: "Keyong Deng"
+institution: "Department of Clinical Epidemiology"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+# Loading package
+```{r}
+library(nnet)
+library(dplyr)
+```
+
+# Loading data
+- only for the non-routine subtypes
+
+```{r include=FALSE}
+# Read the .Rdata 
+load(file = "./Results/Survivial.Rdata")
+df_surv
+colnames(df_surv)
+
+# select variables
+# leeftijd.x, sexe.x, bmim.x, IDS_total_score, Pittstotal, dhd15_finalscore, smoking,totmeth, alc_g
+```
+
+
+# Function to calculate the R2
+```{r}
+# calculate the McFadden R2 
+calculate_r2 <- function(model, null_model){
+  l_model <- logLik(model)
+  l_null_model <- logLik(null_model)
+  r2 <- 1 - (l_model/l_null_model) # null model means only intercept
+  return(as.numeric(r2))
+}
+
+# Create a function for sequential exclusion analysis
+seq_excl_analysis <- function(data, outcome_var, exposure_var){
+  
+  library(MASS)
+  
+  # create the formula model
+  full_formula <- as.formula(paste(outcome_var, "~", paste(exposure_var, collapse = "+")))
+  
+  # Fit the null model
+  null_formula <- as.formula(paste(outcome_var, "~ 1"))
+  null_model <- polr(null_formula, data = data, Hess = FALSE)
+  
+  # Fit the full model
+  full_model <- polr(full_formula, data = data, Hess = FALSE)
+  
+  logLik(full_model)
+  full_r2 <- calculate_r2(full_model, null_model)
+  
+  # Results
+  results <- data.frame(
+    Excluded_var = character(),
+    Remain_var = character(),
+    R_square = numeric(),
+    Change_R_squre = numeric(),
+    Precent_change = numeric(),
+    stringsAsFactors = F
+  )
+  
+  # Add the full model results
+  results <- rbind(results, 
+                   data.frame(
+                     Excluded_var = "None",
+                     Remain_var = paste(exposure_var, collapse = ","),
+                     R_square = full_r2,
+                     Change_R_squre = NA,
+                     Precent_change = NA
+                   ))
+  
+  # Sequential exclusion of each variable
+  for (i in 1:length(exposure_var)){
+    excluded_var = exposure_var[i]
+    remain_var = exposure_var[-i]
+    
+    # build the reduced formula again
+    if (length(remain_var) > 0){
+      reduced_formula <- as.formula(paste(outcome_var, "~", paste(remain_var, collapse = "+")))
+    } else{
+      reduced_formula <- null_formula
+    }
+    
+    # Fit the model 
+    reduced_model <- polr(reduced_formula, data = data, Hess = FALSE)
+    reduced_r2 <- calculate_r2(reduced_model, null_model)
+    
+    # Calculate the change
+    change_r2 <- full_r2 - reduced_r2
+    precent_change <- (change_r2/full_r2) * 100
+    
+    # Add the results
+    results <- rbind(results,
+                     data.frame(
+                     Excluded_var = excluded_var,
+                     # paste(remain_var, collapse = ","),
+                     Remain_var = ifelse(length(remain_var) > 0, 
+                                         paste(remain_var, collapse = ","), 
+                                         "Null_model"),
+                     R_square = reduced_r2,
+                     Change_R_squre = change_r2,
+                     Precent_change = precent_change
+                     ))
+  }
+  
+  # sort the results by change in the R-square
+  results <- results[order(results$Change_R_squre),]
+  return(results)
+}
+```
+
+# Run the function
+
+```{r}
+# Define the exposure
+df_surv$sleepduration <- as.integer(as.numeric(df_surv$sleepduration , units = "hours"))/3600  
+
+Exposure_vars = c("leeftijd.x", "sexe.x", 
+                  # "bmim.x", 
+                  "IDS_total_score", 
+                  "Pittstotal", "dhd15_finalscore", "smoking" ,"totmeth", "alc_g" 
+                  , "sleepduration"
+                  )
+
+table(df_surv$c_name)
+
+# Convert to ordered factor
+df_surv$c_name <- factor(df_surv$c_name, 
+                      levels = c("Subtype1", "Subtype2", 
+                                 "Subtype3", "Subtype4"), 
+                      ordered = TRUE)
+
+# Define the outcome
+Outcomes = "c_name"
+
+# Run 
+results_table = seq_excl_analysis(
+  data = df_surv,
+  outcome_var = Outcomes,
+  exposure_var = Exposure_vars
+)
+
+# Print the tables
+library(knitr)
+kable(results_table,
+      digits = 2,
+      col.names = c("Excluded Predictor", "Remaining Predictors", 
+                   "R²", "ΔR²", "% Change"),
+      caption = "Impact of Excluding Each Variable on McFadden's R2")
+
+results_table[order(results_table$Change_R_squre),]
+
+# set the digits to 2 decimal
+format(results_table, digits = 2, nsmall = 2, scientific = FALSE)
+```
+# Recode the variable name
+```{r variable_recode}
+results_table$Excluded_var
+
+results_table$Excluded_var <- dplyr::recode(results_table$Excluded_var,
+                         "sexe.x" = "Sex",
+                         "smoking" = "Smoking status",
+                         "IDS_total_score" = "Inventory of Depressive Symptomatology",
+                         "alc_g" = "Alcohol intake",
+                         "leeftijd.x" = "Age",
+                         "dhd15_finalscore" = "Dutch Healthy Eating Index",
+                         "Pittstotal" = "Pittsburgh sleep quality index",
+                         "sleepduration" = "Sleep duration",
+                         "totmeth" = "Physical activity",
+                         # "bmim.x" = "BMI"
+                         )
+results_table
+
+format(results_table, digits = 2, nsmall = 2, scientific = FALSE)
+```
+
+```{r}
+table(df_surv$c_name)
+```
+
+
+# Data Visualization
+
+```{r}
+# Plot the results using ggplot2
+library(ggplot2)
+library(ggembl)
+plot_data <- results_table |> 
+  dplyr::filter(Excluded_var != "None")
+
+ggplot(plot_data, aes(x = reorder(Excluded_var, Change_R_squre), 
+                      y = Change_R_squre)) +
+  geom_col(fill = "#E40046", alpha = 0.8) +
+  coord_flip() +
+  labs(title = "Impact of Excluding Each Variable in R²",
+       # subtitle = "Change in McFadden's R² when each variable is removed",
+       x = "Excluded Variable",
+       y = "Change in R²") +
+  theme_publication() 
+  # + geom_text(aes(label = sprintf("%.2f", Change_R_squre)), # set the label to 2 decimals
+  #           hjust = -0.1, size = 2)
+
+ggsave(filename = "./Results/Variable_Importance_For_Multinomial_logistic_v4.pdf",
+       width = 6, height = 3)
+```
+
+```{r}
+# Test code ######
+# outcome_var = Outcomes
+# exposure_var = Exposure_vars
+# full_formula <- as.formula(paste(outcome_var, "~", paste(exposure_var, collapse = "+")))
+# full_formula
+# 
+# full_model <- polr(full_formula, data = df_surv, Hess = FALSE)
+# logLik(full_model)
+# 
+# null_formula <- as.formula(paste(outcome_var, "~ 1"))
+# null_model <- polr(null_formula, data = df_surv, Hess = FALSE)
+# 
+# calculate_r2(full_model, null_model)
+
+```
+
+## Compare the difference between lifestyle factors
+```{r}
+dim(df_surv)
+
+Test_vars = c("leeftijd.x",  "bmim.x", 
+                  "IDS_total_score", 
+                  "Pittstotal", "dhd15_finalscore"
+                  ,"totmeth", "alc_g" , "leismeth"
+                  )
+
+
+ANOVA_analysis <- function(df, group, lifestyle_factors) {
+
+   # Dynamically create the formula for the linear model
+   formula <- as.formula(paste(lifestyle_factors, "~", group))
+
+   # Create the linear model
+   model <- lm(formula, data = df)
+
+   # Perform ANOVA
+   model_aov <- aov(model)
+
+   # Output the summary of the ANOVA
+   print(summary(model_aov))
+
+   # Perform Tukey HSD test
+   tukey_test <- TukeyHSD(model_aov)
+
+   # Return the result of Tukey HSD test
+   return(tukey_test)
+ }
+
+# ANOVA_analysis(df = df_surv, group = "c_name", lifestyle_factors = Test_vars[1])
+
+for (i in 1:length(Test_vars)) {
+  print(Test_vars[i])
+  print(ANOVA_analysis(df = df_surv, group = "c_name", lifestyle_factors = Test_vars[i]))
+}
+
+```
+

@@ -1,0 +1,562 @@
+# All outputs
+In this file, all tables and figures that were not computed yet will be added.
+All output files (also from the other Rmd files) can be found in the /Output directory. 
+
+# Metabolomics
+```{r}
+source("00_functions.R")
+
+packageVersion("ggalluvial")
+packageVersion("fpc")
+packageVersion("ConsensusClusterPlus")
+packageVersion("clusterProfiler")
+
+library(haven)
+attr(df_surv$Insuline_r1, "label")
+```
+
+# Set up
+```{r df_baseline}
+# df_test2 <- merge(df_surv, df_T)
+# df_test3 <- merge(df_surv_w, df_W)
+```
+
+# Baseline tables (table 1)
+```{r baseline_table}
+my.render.cont <- function(x) {
+  
+    # Calculate statistics
+    med <- median(x, na.rm = TRUE)
+    q25 <- quantile(x, 0.25, na.rm = TRUE)
+    q75 <- quantile(x, 0.75, na.rm = TRUE)
+    
+    # mean, sd
+    mn <- mean(x, na.rm = TRUE)
+    sd <- sd(x, na.rm = TRUE)
+    
+    # min, max
+    min <- min(x, na.rm = TRUE)
+    max <- max(x, na.rm = TRUE)
+    
+    # missingness
+     n_miss <- sum(is.na(x))
+     pct_miss <- (n_miss/length(x)) * 100
+    
+    # Return both formats: mean(SD) and median(IQR)
+    
+    sprintf("%.2f (%.2f)\n%.2f (%.2f - %.2f)\n (%.2f-%.2f) \n Missing: %d (%.1f%%)", 
+            mn, sd,           # Mean (SD)
+            med, q25, q75,
+            min, max,
+            n_miss, pct_miss)    # Median (IQR)
+}
+
+# table1_original <- table1( ~ leeftijd + bmim+ middelomtrek + heupomtrek + glucose1 + Matsuda + IR + trig1 + hdlc1 + TG_perc + GRS_T2DM_scld + MVAT + MSAT | factor(sexe), 
+#                           data = df_test2,
+#                           render.continuous = my.render.cont) 
+# 
+# # sexe = 1 (male), sexe = 2 (female)
+# df_test3$GRS_T2DM_scaled <- scale(df_test3$GRS_T2DM)
+# table1_proxy <- table1(~ leeftijd + bmim + middelomtrek + heupomtrek + glucose1 + Matsuda + IR + trig1 + hdlc1 + TG_perc + MSAT + MVAT + GRS_T2DM_scaled| factor(sexe), 
+#                        data = df_test3,
+#                        render.continuous = my.render.cont)
+# 
+# tabs <- list(table1_original, table1_proxy)
+# lapply(tabs, as_tibble) |>
+#   write.xlsx(file = "../Table1.xlsx")
+
+```
+
+# Baseline table for each cluster
+```{r cluster_table}
+# table1_cluster <- table1(~ leeftijd + bmim+ middelomtrek + heupomtrek + glucose1 + Matsuda + IR + trig1 + hdlc1 + TG_perc + MVAT + MSAT + GRS_T2DM_scld| factor(c_name), 
+#                          data = df_test2,
+#                          render.continuous = my.render.cont)
+# 
+# table1_cluster_proxy <- table1(~ leeftijd + bmim+ middelomtrek + heupomtrek + glucose1 + Matsuda + IR + trig1 + hdlc1 + TG_perc + MVAT + MSAT + GRS_T2DM_scaled | factor(c_name_w),
+#                                data = df_test3,
+#                                render.continuous = my.render.cont)
+# 
+# tabs <- list(table1_cluster, table1_cluster_proxy)
+# lapply(tabs, as_tibble) |>
+#   write.xlsx(file = "../Table1_cluster.xlsx")
+
+```
+
+# Radar plot original list (small sample size)
+
+```{r radar_original}
+# set.seed(1)
+# 
+# data_radar <- df_test2 %>% select(c(c_name, bmim, glucose1, Matsuda, IR, TG_perc, MVAT, MSAT))
+# ### test
+# data_rp <- data.frame(
+#   row.names = c("Low risk", "Beta cell function failure", "Visceral fat","Insulin resistance fatty liver"),
+#   BMI = c(25.67, 29.39, 29.95, 32.45), # mean
+#   "Fasting glucose" = c(5.12, 5.55, 5.43, 6.05), # mean
+#   "Insulin sensitivity" = c(8.28, 5.58, 3.51, 2.73), # median
+#   "Insulin secretion" = c(0.29, 0.23, 0.47, 0.28), # median
+#   "Liver fat%" = c(1.88, 3.86, 5.89, 17.69), # median
+#   MVAT = c(69.30, 111.24, 134.30, 178.48 ), # 
+#   MSAT = c(220.65, 307.00, 311.74, 356.77) # 
+# )
+# 
+# max_min <- data.frame(
+#   BMI = c(45, 18),
+#   "Fasting glucose" = c(11, 3),
+#   "Insulin sensitivity" = c(28, 1),
+#   "Insulin secretion" = c(1, 0),
+#   "Liver fat%" = c(20, 0),
+#   MVAT = c(200, 50),
+#   MSAT = c(380, 150)
+# )
+# rownames(max_min) <- c("Max", "Min")
+# 
+# df_rp_test <- rbind(max_min, data_rp)
+# 
+# ## plot radar chart
+#   
+# # Define the colors
+# brighter_darker_colors <- c("#559E4B","#357ABD","#edbd08", "#734173")
+# 
+# # Use the defined colors for borders and fills with alpha transparency
+# colors_border <- brighter_darker_colors
+# colors_in <- sapply(brighter_darker_colors, function(col) adjustcolor(col, alpha.f = 0.3))
+#   
+# title <- c("Low risk", "Beta cell function failure","Visceral fat", "Insulin resistance fatty liver")
+
+```
+
+# Radar plot proxy list (large sample size)
+
+```{r radar_proxy}
+# set.seed(2)
+# ### test
+# data_rp_w <- data.frame(
+#   row.names = c("Low risk", "Beta cell function failure", "Visceral fat", "Insulin resistance fatty liver"),
+#   BMI = c(24.93, 29.46, 29.31, 35.37), # mean
+#   "Fasting glucose" = c(5.19,5.80, 5.43, 5.76), # mean
+#   "Insulin sensitivity" = c(8.50, 2.78, 5.64, 3.43), # median
+#   "Insulin secretion" = c(0.28, 0.41, 0.27, 0.28), # median
+#   "Fasting TG" = c(0.82, 1.93, 1.14, 1.44), # median
+#   "Hip circumference" = c(101, 108, 110, 121), # mean
+#   "Waist circumference" = c(87.3, 101.76, 100.41, 115.38) # mean
+# )
+# 
+# max_min_w <- data.frame(
+#   BMI = c(38, 25),
+#   "Fasting glucose" = c(6.5, 4),
+#   "Insulin sensitivity" = c(13, 2),
+#   "Insulin secretion" = c(1, 0),
+#   "Fasting TG" = c(2.5, 0.5),
+#   "Hip circumference" = c(135, 100),
+#   "Waist circumference" = c(125, 85)
+# )
+# rownames(max_min_w) <- c("Max", "Min")
+# 
+# df_rp_test_w <- rbind(max_min_w, data_rp_w)
+# df_rp_test_w
+# 
+# title <- c("Low risk", "Beta cell function failure","Visceral fat", "Insulin resistance fatty liver")
+```
+
+## combine two radar plots
+```{r radar_proxy}
+
+# pdf(file = "Combined_radar_plots.pdf", width = 8, height = 10)
+
+# png(file = "Combined_radar_plots.png", 
+#     width = 8, height = 10,  # Size in inches
+#     units = "in",            # Specify units as inches
+#     res = 500)              # Resolution in dpi (dots per inch)
+
+# pdf(file = "Results/Combined_radar_plots.pdf",
+#     width = 10,
+#     height = 15)
+# 
+# # par(mar = rep(0.8, 4))
+# par(mfrow = c(4, 2), 
+#     # outer margins
+#     oma = c(0, 0, 0, 0), 
+#     # inner margins
+#     mar = c(2, 2, 2, 2))
+# for(i in 1:4){
+#   
+#   # Custom the radarChart
+#   radarchart(df_rp_test[c(1,2,i+2),], # axistype=0, 
+#              
+#              #custom polygon
+#              pcol=colors_border[i], pfcol=colors_in[i], plwd=3, plty=1, pty = 32,
+#              
+#              #custom the grid
+#              cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8,
+#              
+#              #custom labels
+#              vlcex=0.8,
+#              
+#              #title
+#              title=title[i]
+#   )
+#   
+#   # Add 'A' label only to first plot
+#   if(i == 1) {
+#     mtext("A", side=3, line=-1.5, adj=0.02, cex=1.2, font = 2)
+#   }
+#   
+# }
+# 
+# for(i in 1:4){
+#   # Custom the radarChart
+#   radarchart(df_rp_test_w[c(1,2,i+2),], #axistype=0, 
+#              
+#              #custom polygon
+#              pcol=colors_border[i] , pfcol=colors_in[i] , plwd=3, plty=1 , pty = 32,
+#              
+#              #custom the grid
+#              cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8,
+#              
+#              #custom labels
+#              vlcex=0.8,
+#              
+#              #title
+#              title=title[i]
+#   )
+#   
+#   # Add 'B' label only to first plot
+#   if(i == 1) {
+#     mtext("B", side=3, line=-1.5, adj=0.02, cex=1.2, font = 2)
+#   }
+# }
+# 
+# dev.off()
+
+```
+
+# Lifestyle factors table
+
+```{r lifestyle}
+# df_test2$mid_point <- as.numeric((df_surv$opstatijd-(df_surv$tijd_in_bed/2))/3600) # define midpoint of sleep
+# 
+# # smoking status: o: never smk, 1: former smk, 2: current smoker
+# table_ls <- table1::table1(~  factor(smoking) + dhdi + alc_g + totmeth + leismeth + Pittstotal + mid_point + IDS_total_score | c_name, 
+#                            data = df_test2,
+#                            render.continuous = my.render.cont
+#                            )
+# table_ls %>% as_tibble() %>% write.xlsx("../lifestyle_cluster.xlsx")
+
+```
+
+## violin plot for metabolites
+
+```{r violin_plot_final}
+
+violin_plot <- function(y_var, y_label) {
+  
+  custom_colors <- c("#88c584","#7dadd4","#E7B800","#8f6799")
+  
+  pos <- position_dodge(0.9)
+  ggplot(df_surv, aes(x = c_name_plot, y= df_surv[,y_var], fill = c_name_plot)) +
+    geom_violin(alpha = 0.5, position = pos) +
+    geom_boxplot(width = .2, 
+                 #fatten = NULL, 
+                 alpha = 0.75,
+                 position = pos,
+                 outlier.shape = NA) +
+    scale_fill_manual(values = custom_colors) + 
+    theme_classic() + 
+    theme(panel.grid.major.y = element_line(),
+          panel.grid.minor.y = element_line(),
+          
+          # change the distance between label and y axis
+          #  axis.text.y = element_text(margin = margin(r = 5)),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          axis.text = element_text(size = 16),
+          axis.text.x = element_text(size = 16, angle = 30, vjust = 1, hjust = 1),
+          axis.text.y = element_text(size = 16),
+          # remove the legend
+          legend.position = "none",
+          panel.border = element_rect(color = "black", fill = NA, size = 0.5)) + 
+    scale_y_continuous(limits = c(min(df_surv[,y_var])-1, 
+                                  max(df_surv[,y_var])+1)) + 
+    labs(x = "Subtypes", y = y_label)
+  
+}
+
+
+# Add comparison in the Figures 
+violin_plot_v2 <- function(df, y_var, y_label, sub_groups){
+  # require packages
+  library(ggpubr)
+  
+  custom_colors <- c("#88c584","#7dadd4","#E7B800","#8f6799")
+  
+  # perform ANOVA test
+  formula_lm <- paste(y_var, "~c_name_plot")
+  anova_results <- aov(as.formula(formula_lm), data = df)
+  anova_p <- summary(anova_results)[[1]][["Pr(>F)"]][1]
+  
+  # Format the pvalue 
+  if (anova_p < 0.001) {
+    anova_text <- "p < 0.001"
+  } else if (anova_p < 0.01){
+    anova_text <- paste("p =", format(round(anova_p, 2), nsmall = 2))
+  } else {
+    anova_text <- paste("p =", format(round(anova_p, 2), nsmall = 2))
+  }
+  
+  # create basic plot
+  pos <- position_dodge(0.9)
+  p <- ggplot(df, aes_string(x = sub_groups, y= df[,y_var], fill = sub_groups)) +
+    geom_violin(alpha = 0.5, position = pos) +
+    geom_boxplot(width = .2, 
+                 #fatten = NULL, 
+                 alpha = 0.75,
+                 position = pos,
+                 outlier.shape = NA) +
+    scale_fill_manual(values = custom_colors) + 
+    theme_classic() + 
+    theme(panel.grid.major.y = element_line(),
+          panel.grid.minor.y = element_line(),
+          # change the distance between label and y axis
+          #  axis.text.y = element_text(margin = margin(r = 5)),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          axis.text = element_text(size = 16),
+          axis.text.x = element_text(size = 16, angle = 30, vjust = 1, hjust = 1),
+          axis.text.y = element_text(size = 16),
+          # remove the legend
+          legend.position = "none",
+          panel.border = element_rect(color = "black", fill = NA, size = 0.5)) + 
+    scale_y_continuous(limits = c(min(df[,y_var])-1, 
+                                  max(df[,y_var])+1)) + 
+    labs(x = "Subtypes", y = y_label)
+  
+  # add pairwise comparison 
+  if (anova_p < 0.05){
+    # tukey hsd: pairwise test
+    tukey_result <- TukeyHSD(anova_results)
+    tukey_df <- as.data.frame(tukey_result[[1]])
+    tukey_df$comparision <- rownames(tukey_df)
+    
+    # filter the significant comparision
+    significant_comparisons <- tukey_df[tukey_df$`p adj` < 0.05, ]
+    
+    if(nrow(significant_comparisons) > 0){
+        # rename the comparison
+        pairwise_comparisons <- significant_comparisons %>%
+        mutate(
+          group1 = sapply(strsplit(comparision, "-"), `[`, 1),
+          group2 = sapply(strsplit(comparision, "-"), `[`, 2),
+          p.adj = `p adj`,
+          p.adj.signif = case_when(
+            p.adj < 0.001 ~ "***",
+            p.adj < 0.01 ~ "**",
+            p.adj < 0.05 ~ "*",
+            TRUE ~ "ns"
+          )
+        ) %>%
+        select(group1, group2, p.adj, p.adj.signif)
+        
+    # add the annotation into the plot
+    # p <- p + stat_pvalue_manual(
+    #   pairwise_comparisons,
+    #   y.position = max(df[[y_var]], na.rm = TRUE) + 1,
+    #   step.increase = 0.1,
+    #   label = "p.adj.signif"
+    #   )
+        
+    }
+  }
+  
+  # add the annotation into plots
+  p <- p + annotate(
+    "text",
+    x = Inf,
+    y = Inf,
+    label = anova_text,
+    hjust = 1.1,
+    vjust = 1.1,
+    size = 4
+  ) +
+  stat_compare_means(
+    comparisons = list(
+      c("Low", "Intermediate"),
+      c("Low", "Intermediate_high"),
+      c("Low", "High")
+  ),
+  method = "wilcox.test",
+  p.adjust.method = "bonferroni",
+  label = "p.signif",
+  step.increase = 0.1
+)
+  
+  # return plot
+  return(p)
+}
+
+# violin plot 
+
+```
+
+# Test for the plot
+
+```{r}
+# perform ANOVA test
+new_levels <- c("Low","Intermediate", "Intermediate_high", "High")
+df_surv$c_name_plot <- factor(df_surv$c_name, 
+                              labels = new_levels)
+
+formula_lm <- paste("Gp_1", "~c_name_plot")
+glm_result <- glm(formula = formula_lm, data = df_surv, family = gaussian())
+anova_results <- aov(glm_result)
+anova_p <- summary(anova_results)[[1]][["Pr(>F)"]][1]
+
+if (anova_p < 0.001) {
+    anova_text <- "p < 0.001"
+  } else if (anova_p < 0.01){
+    anova_text <- paste("p =", format(round(anova_p, 2), nsmall = 2))
+  } else {
+    anova_text <- paste("p =", format(round(anova_p, 2), nsmall = 2))
+  }
+  
+tukey_result <- TukeyHSD(anova_results)
+tukey_df <- as.data.frame(tukey_result[[1]])
+tukey_df$comparison <- rownames(tukey_df)
+# anova_p <- summary(anova_results)[[1]][["Pr(>F)"]][1]
+
+# pairwise_comparisons <- tukey_df %>%
+#         mutate(
+#           group1 = sapply(strsplit(comparison, "-"), `[`, 1),
+#           group2 = sapply(strsplit(comparison, "-"), `[`, 2),
+#           p.adj = `p adj`,
+#           p.adj.signif = case_when(
+#             p.adj < 0.001 ~ "***",
+#             p.adj < 0.01 ~ "**",
+#             p.adj < 0.05 ~ "*",
+#             TRUE ~ "ns"
+#           )
+#         ) %>%
+#         select(group1, group2, p.adj.signif)
+
+# p1 <- p + stat_pwc(
+#   method = "wilcox_test",
+#   p.adjust.method = "bonferroni",
+#   label = "p.adj.signif",
+#   bracket.nudge.y = 0.1,
+#   step.increase = 0.1
+# ) 
+# 
+# p2 <- p + stat_compare_means(
+#   comparisons = list(
+#     c("Low", "Intermediate"), 
+#     c("Low", "Intermediate_high"), 
+#     c("Low", "High")
+#   ),
+#   method = "wilcox.test",
+#   p.adjust.method = "bonferroni",
+#   label = "p.signif",
+#   step.increase = 0.1
+# )
+
+# c_name_plot <- df_surv$c_name_plot
+# p + stat_pvalue_manual(
+#       pairwise_comparisons,
+#       y.position = max(df_surv[,"Gp_1"], na.rm = TRUE) + 1,
+#       step.increase = 0.1,
+#       label = "p.adj.signif"
+#       )
+
+violin_plot_v2(df = df_surv, y_var = meta_plots[[3]], y_label = meta_plots[[3]], sub_groups = "c_name_plot")
+
+
+
+```
+
+## violin plot for metabolites
+
+```{r violin_proteins}
+meta_plots <- read.csv(file = "./Results/RF_outcomes_metab_v2.csv", row.names = 1)
+
+new_levels <- c("Low","Intermediate", "Intermediate_high", "High")
+# Reorder the factor levels
+
+df_surv$c_name_plot <- factor(df_surv$c_name, 
+                              labels = new_levels)
+
+# length(union(meta_plots$Beta_cell_failure, union(meta_plots$HR_visceral_fat, meta_plots$HR_insulin_resistance))) # 24 obs
+# get the union for all the metabolites
+meta_plots <- union(meta_plots$Intermediate.risk.subtype, 
+                    union(meta_plots$Intermediate.high.risk.subtype, meta_plots$High.risk.subtype))
+length(meta_plots)
+
+# meta_plots_names <- c("Glucose (mmol/L)", "Leucine (mmol/L)", "Isoleucine (mmol/L)", "Glycoprotein (mmol/L)",
+#                      "Valine (mmol/l)", "SVLDLPL (mmol/L)", "MHDLC (mmol/L)", "MVLDLTG (mmol/l)",
+#                      "XLHDLL (mmol/l)", "MVLDLC (mmol/l)", "IDLTG (mmol/l)", "LHDLFC (mmol/l)",
+#                      "XLHDLP (mmol/l)", "HDL3C_1 (mmol/l)", "HDLD_1 (mmol/l)", "LLDLTG (mmol/l)", 
+#                      "LHDLC (mmol/l)", "Tyrosine (mmol/l)", "Creatinine (mmol/l)", "SHDLPL (mmol/l)",
+#                      "Estimated degree of unsaturation", "Saturated fatty acids (mmol/l)", "SHDLTG (mmol/l)", "VLDLD (mmol/l)")
+# 
+# meta_plots_names_full <- setNames(meta_plots_names, meta_plots)
+
+violin_plts <- list()
+
+# df_surv$c_name_plot <- gsub("-", "_", df_surv$c_name_plot)
+
+
+for (meta in meta_plots) {
+  
+  # meta <- meta_plots[[1]]
+  p <- violin_plot_v2(df = df_surv, y_var = meta, y_label = meta, sub_groups = "c_name_plot")
+  violin_plts[[meta]] <- p
+  
+}
+
+# combine it by ggarrange
+# do.call(ggarrange, c(violin_plts, list(ncol = 4)))
+violin_plts <- wrap_plots(violin_plts, ncol = 5)
+
+# ggsave("./Results/plot_violin_final_metabolites_2.png", violin_plts, width = 26 , height = 30, dpi = 500, units = "cm")
+
+pdf(file = "./Results/plot_violin_final_metabolites_v3.pdf", width = 20, height = 30)
+violin_plts
+dev.off()
+
+
+```
+
+## violin plot for proteins
+
+```{r}
+pro_plots <- read.csv(file = "./Results/RF_outcomes_prot_v2.csv", row.names = 1) %>% 
+  slice(1:10) # select the first 10 rows
+
+new_levels <- c("Low","Intermediate", "Intermediate_high", "High")
+# Reorder the factor levels
+df_surv$c_name_plot <- factor(df_surv$c_name, labels = new_levels)
+
+length(union(pro_plots$Intermediate.risk.subtype, union(pro_plots$Intermediate.high.risk.subtype, pro_plots$High.risk.subtype))) # 26
+
+# get the union for all the proteins
+pro_plots <- union(pro_plots$Intermediate.risk.subtype, union(pro_plots$Intermediate.high.risk.subtype, pro_plots$High.risk.subtype))
+
+violin_plts_pro <- list()
+for (proteins in pro_plots) {
+  
+  p <- violin_plot_v2(df = df_surv, y_var = proteins, y_label = proteins, sub_groups = "c_name_plot")
+  
+  # save the proteins plots
+  violin_plts_pro[[proteins]] <- p
+}
+
+# combine it by wrap_plots function
+
+violin_plts_pro <- wrap_plots(violin_plts_pro, ncol = 4)
+
+# ggsave("./Results/plot_violin_final_protein.png", violin_plts_pro, width = 30 , height = 26, dpi = 500, units = "cm")
+
+pdf(file = "./Results/plot_violin_final_proteins_v3.pdf", width = 20, height = 35)
+violin_plts_pro
+dev.off()
+```
+

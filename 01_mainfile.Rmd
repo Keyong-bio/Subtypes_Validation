@@ -1,0 +1,1290 @@
+---
+title: "Metabolicprofiling_mother"
+author: "Annoeska Hameete"
+date: "2024-03-26"
+output:
+  html_document:
+    number_sections: yes
+    keep_md: true
+    
+---
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(warning = FALSE, include = FALSE)
+```
+
+# load the packages
+
+```{r install_packages, include = FALSE}
+# load pacman to install and load other packages easily
+rm(list = ls())
+
+if(!require("pacman"))install.packages('pacman')
+library(pacman)
+
+# load packages
+pacman::p_load("tidyverse",                              # data manipulation including different packages, such as dplyr and ggplot
+                "haven",                                 # load SPSS data
+                "viridis",                               # additional colors for graphs
+                "mclust", "cluster", "fpc",              # clustering
+                "tableone", "survey",                    # create table one
+                "htmlTable", "Hmisc",                    # html tables
+                "fmsb", "factoextra",                    # visualisation
+                "networkD3",                             # sankey plots
+                "survival", "survminer",                 # survival analysis
+                "randomForest", "randomForestExplainer", # random forest
+                "table1", "knitr", 
+                # "gtsummary", 
+                "ConsensusClusterPlus", "sharp", "openxlsx", "colormap", "gridExtra",
+                "patchwork", "broom", "here")                       
+                
+                            
+theme_set(theme_bw())                                    # set theme for plots
+
+```
+
+# Data cleaning
+
+```{r child = here::here("Scripts", "02_setup.Rmd")}
+# load data into data frame
+df <- read_sav('../Data/NEO_analyse_PPXX_TIMED_Hameete_2024-10-15.sav', encoding = "UTF-8")
+
+df_GRS_new <- read.table("GRS_NEO_T2DM_Final_3.txt", header = T)
+
+# merge the new_GRS into the df data frame
+df <- merge(df, df_GRS_new, by.x = "GRS_T2DM", by.y = "GRS_T2DM_before", all.x = TRUE, sort = FALSE)
+df <- df %>% select(-IDs)
+
+# subset to remove participants
+df_sub <- subset(df, 
+                 diab_prev == 0  &       # remove prev T2D
+                 nuchter == 1    &       # remove non fasting participants (30)
+                 devmeal == 0    &       # remove partial or full meal deviations (430)
+                 eind2  != 8             # remove loss-to-follow-up  (94)
+)
+
+sum(df$diab_prev == 0, na.rm = T)
+sum(df$nuchter == 1, na.rm = T)
+sum(df$devmeal == 0, na.rm = T)
+sum(df$eind2 == 8, na.rm = T)
+
+#Create indices for future references and merging
+df_sub$ID <- seq.int(nrow(df_sub))
+
+names(df_sub) <- gsub("\\.", "_", names(df_sub))
+
+df_sub <- df_sub %>% dplyr::rename("Insuline_r2" = "insuline_r2",
+                  "Insuline_r3" = "insuline_r3")
+
+# Remove variables smaller than 0 when implausible
+df_sub$Insuline_r1[df_sub$Insuline_r1 < 0] <- NA
+df_sub$Insuline_r2[df_sub$Insuline_r2 < 0] <- NA
+df_sub$Insuline_r3[df_sub$Insuline_r3 < 0] <- NA
+df_sub$glucose1[df_sub$glucose1 < 0] <- NA
+df_sub$glucose2[df_sub$glucose2 < 0] <- NA
+df_sub$glucose3[df_sub$glucose3 < 0] <- NA
+df_sub$Insuline_r1 <- as.numeric(df_sub$Insuline_r1)
+df_sub$Insuline_r2 <- as.numeric(df_sub$Insuline_r2)
+
+```
+
+## Add insulin sensitivity and secretion
+
+```{r insuline sensitivity and secretion}
+# Matsuda index -> insulin sensitivity
+# mean insulin value for each participant
+insulin_mean <- rowMeans(df_sub[, c("Insuline_r1", "Insuline_r2", "Insuline_r3")], na.rm=TRUE)  
+
+# mean glucose value for each participant
+glucose_mean <- rowMeans(df_sub[, c("glucose1", "glucose2", "glucose3")], na.rm=TRUE)              
+
+# variables needed for Matsuda index
+ins_glc_0 <- df_sub$Insuline_r1 * df_sub$glucose1 * 18.01                                                                           
+ins_glc_mean <- insulin_mean * glucose_mean * 18.01
+
+# create Matsuda index  
+df_sub$Matsuda <-(10000/(sqrt((ins_glc_0*ins_glc_mean))))                                         
+
+# insulin resistance
+df_sub$IR <- (df_sub$Insuline_r2)/(df_sub$glucose2 * df_sub$bmim)   
+
+```
+
+## Create clustering DFs
+
+```{r}
+# TUEF/TULIP (more variables version)
+head(df_sub$glucmet2bl)
+
+df_T <- df_sub[,c("ID", "leeftijd", "sexe", "glucmet2bl", "bmim",       
+                  "t2d_inc",                                                       
+                  "Matsuda", "IR",  "AUCgluc1" ,                                
+                  "hdlc1", "TG_perc", "MSAT", "MVAT" , "trig1", "choltot1", 
+                  "middelomtrek", "heupomtrek", 
+                   "Insuline_r1", "GRS_T2DM_y")]                       
+
+# sum(is.na(df_sub$bmim))
+# sum(is.na(df_sub$glucmet2bl))
+# attr(df_sub$glucmet2bl, "labels")
+
+df_T <- na.omit(df_T) # 1529 obs
+
+df_T <- df_T %>% 
+  rename(GRS_T2DM = GRS_T2DM_y)
+
+# Whitehall (less variable version)
+df_W <- df_sub[,c("ID","leeftijd", "sexe", "glucmet2bl", "bmim",     
+                  "t2d_inc",                                                    
+                   "Matsuda", "IR", "Insuline_r1",                        
+                  "glucose1", "AUCgluc1",                                       
+                  "trig1", "middelomtrek", "heupomtrek", "hdlc1")]                
+
+df_W <- na.omit(df_W) # 5322 obs
+
+```
+
+# Load in the functions
+
+```{r child = here::here("Scripts", "03_clustering.Rmd")}
+# source function
+source("./00_functions.R")
+
+# set number of clusters to 4
+cluno <- 4
+
+# create variable with clustering variables (original list)
+modeller <- c("MSAT_scld",
+              "MVAT_scld",
+              "Matsuda_scld",
+              "IR_scld",
+              "AUCgluc1_scld",
+              "hdlc1_scld",
+              "TG_perc_scld",
+              "GRS_T2DM_scld")
+
+# rename modeller
+modeller_nonscaled <- str_replace_all(modeller,"_scld","")
+
+# create variable with clustering variables (proxy list)
+modeller_w <- c("AUCgluc1_scld",
+              "Matsuda_scld",
+              "IR_scld",
+              "Insuline_r1_scld",
+              "trig1_scld",
+              "middelomtrek_scld",
+              "heupomtrek_scld",
+              "bmim_scld",
+              "hdlc1_scld")
+
+modeller_nonscaled_w <- str_replace_all(modeller_w,"_scld","")
+
+# create data set with needed variables (original list)
+data.anal <- df_T %>% 
+  dplyr::select(ID, leeftijd, sexe, glucmet2bl, bmim,       
+                  t2d_inc,                                                  
+                  Matsuda, IR,                                        
+                  hdlc1, TG_perc, MSAT, MVAT, GRS_T2DM,
+                  one_of(modeller_nonscaled))
+
+sum(df_T$bmim >= 27)/nrow(df_T) # 74%
+
+# create data set with needed variables (proxy list)
+data.anal_w <- df_W %>% 
+  dplyr::select(ID, leeftijd, sexe, glucmet2bl, bmim,       
+                t2d_inc, 
+                AUCgluc1, 
+                Matsuda, IR, Insuline_r1,                                     
+                hdlc1, trig1, middelomtrek, heupomtrek, 
+                one_of(modeller_nonscaled_w))
+
+sum(df_W$bmim >= 27)/nrow(df_W) # 77%
+# use function to scale data sets
+# smaller data
+data.scld <- preparedata(data.anal) 
+
+# larger data
+data.scld_w <- preparedata_w(data.anal_w)                 
+```
+
+# count the number of individuals after data cleaning steps
+
+```{r counts_function}
+data.scld.counts <- dignose_prepdata(data.anal)
+data.scld.counts
+
+data.scld.w.counts <- dignose_prepdata_w(data.anal_w)
+data.scld.w.counts
+```
+
+
+### clustering analysis
+
+```{r}
+# data frame for clustering
+modeling <- data.scld %>% 
+        select(one_of(modeller)) 
+
+modeling_w <- data.scld_w %>% 
+  select(one_of(modeller_w)) 
+
+# calculate gowers distances
+gow_dist <- daisy(modeling, metric="gower")
+gow_dist_w <- daisy(modeling_w, metric="gower")
+
+data.scld_1 <- data.scld %>% select(one_of(modeller))
+data.scld_w_1 <- data.scld_w %>% select(one_of(modeller_w))
+
+# test silhouette width: first list
+sil_width <- c(NA)
+for(i in 2:10){
+  pam_fit <- pam(gow_dist,
+                 diss = TRUE,
+                 k = i)
+  
+  sil_width[i] <- pam_fit$silinfo$avg.width
+}
+
+# test silhouette width: second list
+sil_width_w <- c(NA)
+for(i in 2:10){
+  pam_fit_w <- pam(gow_dist_w,
+                 diss = TRUE,
+                 k = i)
+  
+  sil_width_w[i] <- pam_fit_w$silinfo$avg.width
+}
+
+if (!dir.exists("Results")) dir.create(
+  "Results"
+)
+# Elbow plot
+# png(filename = "Results/slihouette width.png",     
+#     width = 6, height = 10,  # Size in inches
+#     units = "in",            # Specify units as inches
+#     res = 500)
+
+par(mfrow = c(2,1))
+plot(1:10, sil_width, type="b", xlab="Number of Clusters",
+  ylab="Silhouette", main = "Orignial_list")
+
+plot(1:10, sil_width_w, type = "b", xlab = "Number of Clusters", 
+     ylab = "Silhouette", main = "Proxy_list")
+dev.off()
+
+# pam clustering prep steps
+modeling.all <- data.scld %>% 
+            select(one_of(modeller)) 
+
+modeling.all_w <- data.scld_w %>% 
+  select(one_of(modeller_w)) 
+
+# write.csv(modeling.all, file = "./Results/modeling_all_1.csv", row.names = FALSE)
+# write.csv(modeling.all_w, file = "./Results/modeling_all_2.csv", row.names = FALSE)
+```
+## consensusclutser analysis
+
+```{r consensuscluster_function}
+
+myDistFunc = function(x){ daisy(x, metric="gower")} # use this as the distance matrix
+
+### slow step 1 ####
+res_pam <- ConsensusClusterPlus(t(modeling.all),
+                                maxK = 8,
+                                reps = 100,
+                                pItem = 0.8, ## percent of sample to consider for clustering
+                                pFeature = 1, ## percent of features to consider
+                                plot = "png",
+                                clusterAlg = "pam",
+                                title = "./consensus",
+                                distance = "myDistFunc",
+                                seed = 2025,
+                                verbose = T)
+# calcICL(res_pam, title = "./consensus_plots", plot = "png")
+
+### slow step 2 ####
+res_pam_w <- ConsensusClusterPlus(t(modeling.all_w),
+                                   maxK = 8,
+                                   reps = 100,
+                                   pItem = 0.8, ## percent of sample to consider for clustering
+                                   pFeature = 1, ## percent of features to consider
+                                   plot = "png",
+                                   clusterAlg = "pam",
+                                   title = "./pam_w",
+                                   distance = "myDistFunc",
+                                   seed = 2025,
+                                   verbose = T)
+
+# calcICL(res_pam_w, title = "./pam_w_plots", plot = "png")
+```
+
+## After deciding the best cluster number
+
+```{r consensuscluster_function}
+cluno = 4
+set.seed(25)
+pam <- daisy(modeling.all, metric = "gower")
+kc <- pam(pam,k=cluno)
+centers <-  modeling.all[kc$medoids,]
+
+pam_w <- daisy(modeling.all_w, metric = "gower")
+kc_w <- pam(pam_w,k=cluno)
+centers_w <-  modeling.all_w[kc_w$medoids,]
+
+# create variables for plots
+clusterplot <- bind_cols(newcluster = kc$cluster,modeling.all) %>% 
+              left_join(data.scld) %>%
+              select(ID, newcluster,sexe,leeftijd,bmim,
+                     IR, 
+                     # one_of(modeller_nonscaled),
+                     one_of(modeller))
+
+clusterplot_w <- bind_cols(newcluster_w = kc_w$cluster,modeling.all_w) %>% 
+  left_join(data.scld_w) %>%
+  select(ID, newcluster_w,sexe,leeftijd,
+         bmim,
+         IR, 
+         # one_of(modeller_nonscaled_w),
+         one_of(modeller_w))
+```
+
+
+# rename the cluster
+## 1. making the baseline table stratified by sex and by cluster
+
+```{r}
+# set cluster to numeric
+cluster.all <- clusterplot %>% 
+              mutate(cluster = as.numeric(newcluster)) 
+
+cluster.all_w <- clusterplot_w %>% 
+  mutate(cluster_w = as.numeric(newcluster_w)) 
+
+table(cluster.all$cluster)
+table(cluster.all_w$newcluster_w)
+
+## Comparing the characteristics of participants in each subtypes
+source("00_functions.R")
+
+df_surv <- merge(df_sub, cluster.all, by = "ID")
+df_surv_w <- merge(df_sub, cluster.all_w, by = "ID")
+
+my.render.cont <- function(x) {
+  
+    # Calculate statistics
+    med <- median(x, na.rm = TRUE)
+    q25 <- quantile(x, 0.25, na.rm = TRUE)
+    q75 <- quantile(x, 0.75, na.rm = TRUE)
+    
+    # mean, sd
+    mn <- mean(x, na.rm = TRUE)
+    sd <- sd(x, na.rm = TRUE)
+    
+    # min, max
+    min <- min(x, na.rm = TRUE)
+    max <- max(x, na.rm = TRUE)
+    
+    # missingness
+    n_miss <- sum(is.na(x))
+    pct_miss <- (n_miss/length(x)) * 100
+    
+    # Return both formats: mean(SD) and median(IQR)
+    
+    result <- paste0(sprintf("%.1f (%.1f)", mn, sd),
+                      "\n",
+                      sprintf("%.1f (%.1f - %.1f)", med, q25, q75),
+                      "\n",
+                      sprintf("(%.1f-%.1f)", min, max),
+                      "\n",
+                      sprintf("Missing: %d(%.1f%%)", n_miss, pct_miss))
+    
+    # Use cat to print the results with new lines
+    return(result)
+}
+
+# create another baseline table (stratified by if have accurate measurements)
+
+
+dim(df_surv)
+dim(df_surv_w)
+
+df_surv$c_name <- as.factor(ifelse(df_surv$cluster == 1, 'Subtype4',
+                                  ifelse(df_surv$cluster == 2, 'Subtype3',
+                                  ifelse(df_surv$cluster == 3, 'Subtype1', 
+                                  ifelse(df_surv$cluster == 4, 'Subtype2', NA)))))
+
+
+df_surv_w$c_name_w <- as.factor(ifelse(df_surv_w$cluster_w == 1, 'Subtype2',
+                                  ifelse(df_surv_w$cluster_w == 2, 'Subtype3',
+                                  ifelse(df_surv_w$cluster_w == 3, 'Subtype4', 
+                                  ifelse(df_surv_w$cluster_w == 4, 'Subtype1',NA)))))
+
+ifmatch = match(df_surv_w$ID, df_surv$ID)
+
+df_surv_w$ifmatch = factor(ifelse(is.na(ifmatch) == TRUE, 1, 0))
+table(df_surv_w$ifmatch)
+
+df_surv$mid_point <- as.numeric((df_surv$opstatijd-(df_surv$tijd_in_bed/2))/3600) # define midpoint of sleep
+df_surv_w$mid_point <- as.numeric((df_surv_w$opstatijd-(df_surv_w$tijd_in_bed/2))/3600) # define midpoint of sleep
+
+table1_ifmatch <- table1( ~ leeftijd.x + bmim.x + middelomtrek + 
+                             heupomtrek + glucose1 + Matsuda + IR.x + 
+                             trig1 + hdlc1 + TG_perc + GRS_T2DM_y + MVAT + MSAT + Insuline_r1 + choltot1 + 
+                            factor(smoking) + dhdi + alc_g + totmeth + leismeth + Pittstotal + mid_point + IDS_total_score | factor(ifmatch), 
+                          data = df_surv_w,
+                          render.continuous = my.render.cont) 
+
+write.xlsx(table1_ifmatch, file = "./Results/table1_ifmatch.xlsx")
+
+##################
+# table1_original <- table1( ~ leeftijd.x + bmim.x + middelomtrek + 
+#                              heupomtrek + glucose1 + Matsuda + IR.x + 
+#                              trig1 + hdlc1 + TG_perc + GRS_T2DM_y + MVAT + MSAT | factor(sexe.x), 
+#                           data = df_surv,
+#                           render.continuous = my.render.cont) 
+# table1_original
+
+table1_original_cluster <- table1( ~ leeftijd.x + bmim.x + middelomtrek + 
+                             heupomtrek + glucose1 + Matsuda + IR.x + 
+                             trig1 + hdlc1 + TG_perc + GRS_T2DM_y + MVAT + MSAT + Insuline_r1 + choltot1 + 
+                            factor(smoking) + dhdi + alc_g + totmeth + leismeth + Pittstotal + mid_point + IDS_total_score | factor(c_name), 
+                          data = df_surv,
+                          render.continuous = my.render.cont) 
+table1_original_cluster
+
+# another list
+# table1_proxy <- table1( ~ leeftijd.x + bmim.x + middelomtrek + 
+#                              heupomtrek + glucose1 + Matsuda + IR.x + 
+#                              trig1 + hdlc1 + TG_perc + GRS_T2DM_y + MVAT + MSAT | factor(sexe.x), 
+#                           data = df_surv_w,
+#                           render.continuous = my.render.cont) 
+
+table1_proxy_cluster <- table1( ~ leeftijd.x + bmim.x + middelomtrek + 
+                             heupomtrek + glucose1 + Matsuda + IR.x + 
+                             trig1 + hdlc1 + TG_perc + GRS_T2DM_y + MVAT + MSAT + Insuline_r1 + choltot1 + 
+                            factor(smoking) + dhdi + alc_g + totmeth + leismeth + Pittstotal + mid_point + IDS_total_score| factor(c_name_w), 
+                          data = df_surv_w,
+                          render.continuous = my.render.cont) 
+
+
+tabs <- list(
+             # table1_original, 
+             table1_original_cluster, 
+             # table1_proxy, 
+             table1_proxy_cluster)
+
+# lapply(tabs, function(x) round(as.data.frame(x), digits = 1)) |>
+#   write.xlsx(file = "./Results/Tables_cluster_v2.xlsx")
+
+lapply(tabs, as.data.frame) |>
+  write.xlsx(file = "./Results/Tables_cluster_v2.xlsx")
+
+save(df_surv, df_surv_w, file = "./Results/Survivial.Rdata")
+
+```
+
+# scale the variables for radar charts
+
+```{r scale the variables for radar charts}
+
+# Select the variable need for the plot
+colnames(df_surv)
+
+# function to scale the specific columns
+scale_columns <- function(data, column_to_scale){
+  
+  for (cols in column_to_scale) {
+    # new name 
+    new_col = paste0(cols, "_scld")
+    # scale the column and assign to the new column
+    data[[new_col]] <- scale(data[[cols]])
+  }
+  
+  return(data)
+}
+
+df_surv <- scale_columns(data = df_surv, 
+                         column_to_scale = c("bmim.x", "glucose1"))
+colnames(df_surv)[grepl("_scld", colnames(df_surv))]
+
+# hist(df_surv$bmim.x_scld)
+max(df_surv$bmim.x_scld)
+
+Test <- df_surv  %>% 
+  select(bmim.x_scld, glucose1_scld, Matsuda_scld, IR_scld, TG_perc_scld, MSAT_scld, MVAT_scld, hdlc1_scld, GRS_T2DM_scld, AUCgluc1_scld, c_name) %>% 
+  dplyr::group_by(c_name) %>% 
+  summarise(across(everything(),
+                   list(
+                     mean = ~ mean(., na.rm = TRUE),
+                     median = ~ median(., na.rm = TRUE),
+                     p25 = ~ quantile(., 0.25, na.rm = TRUE),
+                     p75 = ~ quantile(., 0.75, na.rm = TRUE),
+                     SD = ~ sd(., na.rm = TRUE)
+                   ))) %>%
+   pivot_longer(cols = 2:51,
+                names_to = c("column"),
+                values_to = "Value") %>% 
+  pivot_wider(names_from = c_name,
+              values_from = Value)
+  
+# Test
+# write.csv(Test, file = "./Results/df_surv_radar.csv", row.names = FALSE)
+write.xlsx(Test, file = "./Results/df_surv_radar.xlsx")
+
+# For another variable list
+df_surv_w <- scale_columns(data = df_surv_w, 
+                         column_to_scale = c("bmim.x", "glucose1"))
+colnames(df_surv_w)[grepl("_scld", colnames(df_surv_w))]
+
+Test_w <- df_surv_w  %>% 
+  select(bmim.x_scld, glucose1_scld, Matsuda_scld, IR_scld, middelomtrek_scld, trig1_scld, heupomtrek_scld, AUCgluc1_scld, hdlc1_scld,
+         Insuline_r1_scld, c_name_w) %>% 
+  dplyr::group_by(c_name_w) %>% 
+  summarise(across(everything(),
+                   list(
+                     mean = ~ mean(., na.rm = TRUE),
+                     median = ~ median(., na.rm = TRUE),
+                     p25 = ~ quantile(., 0.25, na.rm = TRUE),
+                     p75 = ~ quantile(., 0.75, na.rm = TRUE),
+                     SD = ~ sd(., na.rm = TRUE)
+                   ))) %>%
+   pivot_longer(cols = 2:51,
+                names_to = c("column"),
+                values_to = "Value") %>% 
+    pivot_wider(names_from = c_name_w,
+              values_from = Value)
+
+write.xlsx(Test_w, file = "./Results/df_surv_w_radar.xlsx")
+
+Test_w
+
+```
+
+## survival analysis
+
+```{r child = here::here("Scripts", "04_survival.Rmd")}
+# load(file = "./Results/Survivial.Rdata")
+
+# incorporate diabetes diagnosis time
+df_surv$time <- difftime(df_surv$einddatum2, df_surv$visitdd, units = "days")
+df_surv$time_diab <- difftime(df_surv$diabetes2_date, df_surv$visitdd, units = "days")
+
+df_surv <- df_surv %>%
+  mutate(time_diab = coalesce(time_diab, time))
+df_surv$time_y <- as.numeric(df_surv$time_diab/365.25)   # change to year (divided by 365.25)
+round(summary(df_surv$time_y), 2) # Median 6.70, 5.85-7.90
+
+# same for another way
+df_surv_w$time_w <- difftime(df_surv_w$einddatum2, df_surv_w$visitdd, units = "days")
+df_surv_w$time_diab_w <- difftime(df_surv_w$diabetes2_date, df_surv_w$visitdd, units = "days")
+
+df_surv_w <- df_surv_w %>%
+  mutate(time_diab_w = coalesce(time_diab_w, time_w)) # find the first non-missing element
+df_surv_w$time_y <- as.numeric(df_surv_w$time_diab_w/365.25)   # change to year
+round(summary(df_surv_w$time_y), 2) # Median 6.77 5.94-7.94
+
+df_surv$c_name <- factor(df_surv$c_name, levels = c("Subtype1",  "Subtype2", "Subtype3", "Subtype4"))
+df_surv_w$c_name_w <- factor(df_surv_w$c_name_w, levels = c("Subtype1",  "Subtype2", "Subtype3", "Subtype4"))
+
+table(df_surv$c_name, df_surv$t2d_inc)
+table(df_surv_w$c_name_w, df_surv_w$t2d_inc)
+
+# create the surv object
+surv_object <- Surv(df_surv$time_y, df_surv$t2d_inc)        # create Surv object
+fit1 <- survfit(surv_object ~ c_name, data = df_surv)       # create plot object
+
+surv_object_w <- Surv(df_surv_w$time_y, df_surv_w$t2d_inc)
+fit1_w <- survfit(surv_object_w ~ c_name_w, data = df_surv_w)
+
+```
+
+### plot the KM curves
+```{r}
+# par(pty = "s")
+
+p1 <-  ggsurvplot(fit1, fun = function(x) 1-x, 
+                  data = df_surv,  pval = FALSE, 
+                  title = "Non-routine Cluster Variable List",
+                  subtitle = "Median follow-up: 6.7  (IQR: 5.9-7.9) years",
+                  palette = c("#559e4B","#357ABD","#edbd08","#734173"), 
+                  censor.size = 0.05, xlab = "years", ylab = "T2DM cumulative incidence", 
+                  font.y = c(10, "bold"), font.x = c(10, "bold"), 
+                  font.title = c(10, "bold"), font.caption = 8, 
+                  font.subtitle = c(9, "plain"),
+                  font.tickslab = 8, pval.size = 3, 
+                  risk.table = TRUE,
+                  xlim = c(0, 10),
+                  legend.labs = levels(df_surv$c_name),
+                  legend.title = "")
+ 
+p2 <- ggsurvplot(fit1_w, fun = function(x) 1-x, 
+                 data = df_surv_w, pval = FALSE, 
+                 title = "Routine Cluster Variable List" ,
+                 subtitle = "Median follow-up: 6.8  (IQR: 5.9-7.9) years",
+                 palette = c("#559e4B","#357ABD","#edbd08","#734173"), 
+                 censor.size = 0.05, xlab = "years", ylab = "T2DM cumulative incidence", 
+                 font.y = c(10, "bold"), font.x = c(10, "bold"),  
+                 font.title = c(10, "bold"), font.caption = 8, 
+                 font.subtitle = c(9, "plain"),
+                 font.tickslab = 8, pval.size =3, 
+                 risk.table = TRUE,
+                 xlim = c(0, 10),
+                 legend.labs = levels(df_surv_w$c_name_w),
+                 legend.title = "")
+
+# create combined plot
+library(cowplot)
+# cowplot::plot_grid(p1, p2, labels = c("A", "B"))
+
+# combine the risk table
+# top_row <- plot_grid(p1$plot, p2$plot, ncol = 2)
+# bottom_row <- plot_grid(p1$table, p2$table, ncol = 2)
+# 
+# final_plot <- plot_grid(top_row, bottom_row, ncol = 1)
+# print(final_plot)
+
+combined_plot <- arrange_ggsurvplots(list(p1, p2), 
+                    ncol = 2, nrow = 1, print = FALSE)
+
+# ggsave("./Results/plot_survival_original.png", plot_surv, width = 10, height = 6, dpi = 500)
+# 
+pdf(file = "./Results/plot_survival_original_v4.pdf", width = 15, height = 10)
+combined_plot
+dev.off()
+
+combined_plot
+```
+
+
+## Cox regression model
+- adjusted for the confounders
+
+```{r}
+# cox regression for original list
+fit.coxph <- coxph(surv_object ~ c_name,
+                   data = df_surv)                  
+fit.coxph
+
+# with confounders
+fit.coxph_conf <- coxph(surv_object ~ c_name + leeftijd.x + bmim.x + sexe.x,
+                   data = df_surv) 
+fit.coxph_conf
+
+# cox regression proxy list
+fit.coxph_w <- coxph(surv_object_w ~ c_name_w, data = df_surv_w)
+fit.coxph_w
+
+# with confounders, no BMI because BMI is in cluster
+fit.coxph_w_conf <- coxph(surv_object_w ~ c_name_w + leeftijd.x + sexe.x, 
+                          data = as.data.frame(df_surv_w)) 
+fit.coxph_w_conf
+
+# make the output nicre
+library(sjPlot)
+
+tab_model(fit.coxph_w_conf,
+          show.ci = TRUE,
+          show.se = TRUE,
+          digits = 3,
+          title = "Cox Proportional Hazards Model Results")
+```
+
+
+## forest plots -----
+
+```{r}
+# forest plot for the first
+forest <- ggforest(fit.coxph, data = df_surv, main = "") + theme(
+  panel.grid.major = element_line(color = "gray80"), # Customize major gridlines
+  panel.grid.minor = element_blank(), # Remove minor gridlines
+  axis.line = element_line(color = "black"), # Add axis lines
+  plot.title = element_text(hjust = 0.5, size = 16, face = "bold") # Center and style the title
+)
+
+forest_conf <- ggforest(fit.coxph_conf, data = df_surv, main = "")
+
+forest
+forest_conf
+
+# forest plot for the second
+forest_w <- ggforest(fit.coxph_w, data = df_surv_w, main = "")
+forest_w_conf <- ggforest(fit.coxph_w_conf, data = df_surv_w, 
+                          main = "")
+forest_w
+forest_w_conf
+
+
+# pdf("Results/cox_forest_plots.pdf", width = 10, height = 8)
+# print(forest)
+# print(forest_conf)
+# print(forest_w)
+# print(forest_w_conf)
+# dev.off()
+```
+
+## sensitivity analysis
+
+```{r}
+## sensitivity analysis (consider two cases)
+## 1. with extensive confounders
+fit.coxph_conf_sens <- coxph(surv_object ~ c_name + leeftijd.x + bmim.x + sexe.x + totmeth + Pittstotal + dhd15_finalscore + smoking, 
+                   data = df_surv )              
+
+fit.coxph_w_conf_sens <- coxph(surv_object_w ~ c_name_w + leeftijd.x + sexe.x + totmeth + Pittstotal + dhd15_finalscore + smoking, 
+                   data = df_surv_w ) 
+
+forest_conf_sens <- ggforest(fit.coxph_conf_sens, data = df_surv, 
+                             main = "")
+forest_conf_sens
+
+forest_w_conf_sens  <- ggforest(fit.coxph_w_conf_sens, data = df_surv_w, 
+                                main = "")
+forest_w_conf_sens
+
+cox_zph_s <- cox.zph(fit.coxph_conf_sens)
+cox_zph_w_s <- cox.zph(fit.coxph_w_conf_sens)
+
+
+## 2. exclude those less than one follow-up year (need to be revised, not correct)
+## 2.1 using landmark analysis
+library(lubridate)
+sum(is.na(df_surv$visitdd))
+
+# add_year function
+add_year <- function(date) {
+  new_date <- date + years(1)
+  
+  # For NA cases, check if original was Feb 29
+  na_idx <- is.na(new_date)
+  if(any(na_idx)) {
+    orig_dates <- date[na_idx]
+    
+    # Check if they were Feb 29
+    feb29 <- month(orig_dates) == 2 & day(orig_dates) == 29
+    
+    # Convert Feb 29 to Feb 28 of next year
+    new_date[na_idx][feb29] <- ymd(paste0(
+      year(orig_dates[feb29]) + 1, "-02-28"
+    ))
+  }
+  return(new_date)
+}
+df_surv$visitdd2 <- add_year(df_surv$visitdd)
+
+df_surv$fu_year2 <- ifelse(df_surv$t2d_inc==1, 
+                           df_surv$diabetes2_date - df_surv$visitdd2, 
+                          df_surv$einddatum2 - df_surv$visitdd2)/365.25
+summary(df_surv$fu_year2)
+
+
+df_surv_w$visitdd2 <- add_year(df_surv_w$visitdd)
+
+df_surv_w$fu_year2 <- ifelse(df_surv_w$t2d_inc==1, 
+                           df_surv_w$diabetes2_date - df_surv_w$visitdd2, 
+                          df_surv_w$einddatum2 - df_surv_w$visitdd2)/365.25
+summary(df_surv_w$fu_year2)
+
+
+# select this more than 0
+df_surv2 <- df_surv %>% 
+  dplyr::filter(!fu_year2 <= 0) 
+
+df_surv_w2 <- df_surv_w %>% 
+  dplyr::filter(!fu_year2 <= 0) 
+
+fit.coxph_conf_sens_2 <- coxph(Surv(time_y, t2d_inc)  ~ c_name + leeftijd.x + bmim.x + sexe.x
+                               + totmeth + Pittstotal + dhd15_finalscore + smoking, 
+                               data = df_surv2)              
+
+fit.coxph_w_conf_sens_2 <- coxph(Surv(time_y, t2d_inc) ~ c_name_w + leeftijd.x + sexe.x
+                                 + totmeth + Pittstotal + dhd15_finalscore + smoking, 
+                   data = df_surv_w2) 
+
+
+forest_conf_sens_2_forest <- ggforest(fit.coxph_conf_sens_2, data = df_surv2, 
+                             main = "")
+forest_conf_sens_2_forest
+
+forest_w_conf_sens_2_forest  <- ggforest(fit.coxph_w_conf_sens_2, data = df_surv_w2, 
+                                main = "")
+forest_w_conf_sens_2_forest
+
+cox_zph_s_2 <- cox.zph(fit.coxph_conf_sens_2)
+cox_zph_w_s_2 <- cox.zph(fit.coxph_w_conf_sens_2)
+
+print(fit.coxph_conf_sens_2)
+print(fit.coxph_w_conf_sens_2)
+print(cox_zph_s_2)
+print(cox_zph_w_s_2)
+
+pdf("Results/cox_forest_plots_sensitivity-v2.pdf", width = 10, height = 8)
+print(forest_conf_sens)
+print(forest_w_conf_sens)
+print(forest_conf_sens_2_forest)
+print(forest_w_conf_sens_2_forest)
+dev.off()
+```
+
+# plot the forest plots for all figures (survival analysis results)
+
+```{r}
+# make the summary dataframe, model1 (crude model), model2 (adjusted model), 
+# model3 (sensitivity analysis 1: adjusted for other potential confounders)
+# model4 (sensitivity analysis 2: landmark survival analysis)
+
+# original list & proxy list
+
+models_ori <- list(fit.coxph, fit.coxph_conf,
+                   fit.coxph_conf_sens, fit.coxph_conf_sens_2,
+                   fit.coxph_w, fit.coxph_w_conf,
+                   fit.coxph_w_conf_sens, fit.coxph_w_conf_sens_2)
+
+cox_results <- lapply(models_ori, 
+                      function(z){
+                        x <- summary(z)
+                        # rownames 
+                        c_name <- rownames(x$coefficients)
+                        # exp(b)
+                        # HR <- signif(x$coefficients[,2], 3)
+                        # 95%CI
+                        # HR.confint.lower <- signif(x$conf.int[,"lower .95"], 3)
+                        # HR.confint.upper <- signif(x$conf.int[,"upper .95"], 3)
+                        
+                        beta <- signif(x$coefficients[,1], 3)
+                        beta.confint.lower <- signif(x$coefficients[,1] - 1.96 *  x$coefficients[,3], 3)
+                        beta.confint.upper <- signif(x$coefficients[,1] + 1.96 *  x$coefficients[,3], 3)
+                        
+                        # combine them
+                        res <- cbind(c_name, beta, beta.confint.lower, beta.confint.upper)
+                        # remove the rowname of the dataframe
+                        rownames(res) <- NULL
+                        return(res)
+                      })
+
+models <- rep(c("Model1", "Model2", "Model3", "Model4"), each = 3)
+
+temp <- do.call(rbind, cox_results) %>% 
+  as.data.frame() %>% 
+  filter(c_name %in% c("c_nameSubtype2", "c_nameSubtype3", "c_nameSubtype4",
+                       "c_name_wSubtype2", "c_name_wSubtype3", "c_name_wSubtype4")) %>% 
+  dplyr::mutate(model = rep(models, 2)) %>% 
+  dplyr::mutate(group = rep(c("Non-routine cluster variable list", "Routine cluster variable list"), each = 12)) %>% 
+  dplyr::mutate(beta = as.numeric(beta),
+                beta.confint.lower = as.numeric(beta.confint.lower),
+                beta.confint.upper = as.numeric(beta.confint.upper))
+
+temp[temp$c_name == "c_nameSubtype2",]$c_name <- "Low-Intermediate-risk\n (Subtype 2)"
+temp[temp$c_name == "c_nameSubtype3",]$c_name <- "Intermediate-risk\n (Subtype 3)"
+temp[temp$c_name == "c_nameSubtype4",]$c_name <- "Highest-risk\n (Subtype 4)"
+temp[temp$c_name == "c_name_wSubtype2",]$c_name <- "Low-Intermediate-risk\n (Subtype 2)"
+temp[temp$c_name == "c_name_wSubtype3",]$c_name <- "Intermediate-risk\n (Subtype 3)"
+temp[temp$c_name == "c_name_wSubtype4",]$c_name <- "Highest-risk\n (Subtype 4)"
+temp[temp$model == "Model3",]$model <- "Model3-Sensitivity1"
+temp[temp$model == "Model4",]$model <- "Model4-Sensitivity2"
+
+temp$c_name <- factor(temp$c_name, 
+                      levels = c("Low-Intermediate-risk\n (Subtype 2)", 
+                                 "Intermediate-risk\n (Subtype 3)", 
+                                 "Highest-risk\n (Subtype 4)"))
+
+# temp$sig <- ifelse(temp$HR.confint.lower < 1, "not_sig", "sig")
+# temp$sig <- factor(temp$sig, 
+#                    levels = c("not_sig", "sig"))
+
+temp$model <- factor(temp$model, 
+                   levels = c("Model1", "Model2",
+                              "Model3-Sensitivity1", "Model4-Sensitivity2"))
+
+max(temp$beta.confint.upper)
+
+## plot the forest for all cox models
+p_test <- ggplot(temp, aes(x = c_name, y = beta, 
+                           color = model,
+                           group = model)) +
+  geom_pointrange(aes(ymin = beta.confint.lower,
+                      ymax = beta.confint.upper,
+                      # shape = sig
+                      ),
+                  position = position_dodge2(width = 0.5, padding = 0.5),
+                  linewidth = 0.8,
+                  size = 1, fatten = 3,
+                  alpha = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey80") +
+  xlab(label = "Subtypes") +
+  ylab("Beta with 95% Confidence Interval, Cox regression") +
+  # ylim(0, 40) +
+  coord_cartesian(ylim = c(-2.5, 5)) +
+  scale_color_manual(values = c("#4e4f87", "#7588b3", "#f4a373", "#f14c4c")) +
+  # scale_shape_manual(values = c("sig" = 16, "not_sig" = 1)) +
+  # coord_flip() +
+  facet_wrap(vars(group), scales = "free_x") +
+  # theme_publication() +
+  theme(legend.title = element_blank(),
+        # legend.position = c(0.15, 0.8),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 10),
+        strip.text = element_text(face = "bold"),  # strip text
+        legend.key.size = unit(0.8, "lines"),      # Make legend keys smaller
+        legend.text = element_text(size = 8),      # Make legend text smaller
+        legend.spacing.y = unit(0.2, "cm"),        # Reduce space between legend items
+        legend.position = "bottom",                 
+        )
+p_test
+
+pdf(file = "./Results/Cox_regression_model_all_v5.pdf", width = 8, height = 6)
+p_test
+dev.off()
+```
+
+```{r combine the cox regression and KM}
+library(gridExtra)
+library(grid)
+
+arranged_combined <- do.call(grid.arrange, combined_plot)
+final_plot <- grid.arrange(
+  arranged_combined,
+  p_test,
+  ncol = 1, nrow = 2,
+  heights = c(1, 1)
+)
+
+ggsave("./Results/Figure2_KM_Cox_combine_v4.pdf", final_plot, width = 10, height = 15)
+
+```
+
+# export results
+
+```{r}
+cox_results <- list(fit.coxph, fit.coxph_conf, 
+                    fit.coxph_w, fit.coxph_w_conf, 
+                    fit.coxph_conf_sens, fit.coxph_w_conf_sens,
+                    fit.coxph_conf_sens_2, fit.coxph_w_conf_sens_2) %>% 
+   lapply(function(x) tidy(x, exponentiate = T, conf.int = T)) %>% do.call(rbind, .) 
+
+# format the decimals
+cox_results <- cox_results %>%
+  mutate(across(where(is.numeric), \(x) round(x, digits = 3)))
+
+write.xlsx(cox_results, file = "./Results/cox_results_2_v3.xlsx", rowNames = F)
+
+```
+
+# plot the sankey figure
+
+```{r child = here::here("Scripts", "05_clusterstability.Rmd")}
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install("scmap", update = FALSE)
+library(scmap)
+
+# create dataframe for sankey plot between clusters
+# load(file = "./Results/Survivial.Rdata") 
+df_sankey <- merge(df_surv, df_surv_w, by = "ID")
+selected_columns <- c("c_name", "c_name_w", "ID")
+df_sankey <- df_sankey[,selected_columns]
+
+# create sankey plot
+# sankey <- getSankey(df_sankey$c_name, df_sankey$c_name_w, 
+#                     #plot_width = 400, plot_height = 600,
+#   colors = c("#357ABD", "#559E4B", "#734173", "#edbd08"),
+#   # node_order = c("LR", "BCF", "VF", "IRFL")
+#   )
+# plot(sankey)
+
+# count numbers
+same_group <- sum(df_sankey$c_name == df_sankey$c_name_w)
+different_group <- sum(df_sankey$c_name != df_sankey$c_name_w)
+
+# table function together with percentage
+transfer_matrix <- table(df_sankey$c_name, df_sankey$c_name_w)
+
+# margin = 1 means it is row
+percentages <- prop.table(transfer_matrix, margin = 1) * 100
+
+matrix_with_sums <- addmargins(transfer_matrix)
+matrix_with_sums
+
+# combine the percentage
+combined <- matrix(paste(transfer_matrix, " (", round(percentages, 1), "%)", sep=""), 
+                  nrow = nrow(transfer_matrix))
+combined
+
+cat("Number of individuals staying in the same group:", same_group, "\n")
+cat("Number of individuals transferring to different groups:", different_group, "\n")
+print("Transfer matrix:")
+print(transfer_matrix)
+
+transfer_matrix <- as.data.frame(transfer_matrix)
+colnames(transfer_matrix)[1:2] <- c("Non-routine cluster variables", "Routine cluster variables")
+transfer_matrix$`Variable list 1` <- factor(transfer_matrix$`Non-routine cluster variables`,
+                                          levels = c("Subtype1", "Subtype2", "Subtype3", "Subtype4"))
+
+library(ggalluvial)
+
+p_alluvial <- ggplot(data = transfer_matrix,
+       aes(axis1 = `Non-routine cluster variables`, axis2 = `Routine cluster variables`,
+           y = Freq)) +
+  scale_x_discrete(limits = c("Non-routine cluster variables", "Routine cluster variables"), expand = c(.05, .2)) +
+  xlab(NULL) +
+  geom_alluvium(aes(fill = `Non-routine cluster variables`)) +
+  geom_stratum(width = 1/4) +
+  # Use the same colors for both the flows and the labels
+  scale_fill_manual(values = c("Subtype1" = "#559E4B", 
+                              "Subtype2" = "#357ABD", 
+                              "Subtype3" = "#edbd08", 
+                              "Subtype4" = "#734173"),
+                    name = NULL) +
+  # Add colored labels, matching fill colors to text
+  geom_text(stat = "stratum", 
+            aes(label = after_stat(stratum),
+                color = after_stat(stratum))) +
+  
+  # Add the same color scale for text
+  scale_color_manual(values = c("Subtype1" = "#559E4B", 
+                              "Subtype2" = "#357ABD", 
+                              "Subtype3" = "#edbd08",
+                              "Subtype4" = "#734173")) +
+  theme_minimal() + ylab("Number of Participants") +
+  
+  # Hide the color legend for text (optional, since it's redundant)
+  guides(color = "none") +
+  theme(axis.text.x = element_text(size = 10, face = "bold"))
+
+ggsave('./Results/Alluvial_concordance_v4.png', p_alluvial, width = 8, height = 8, dpi = 300, bg = "white")
+
+p_alluvial
+```
+
+# cluster stability
+
+```{r}
+# use distance matrix as inputs
+stable_list <- c("gow_dist", "gow_dist_w")
+
+Jaccard_plot <- list()
+for (stable_list in stable_list) {
+  
+  res_post_noDM_stable_kmeans <- clusterboot(get(stable_list), 
+                                             distances = T,
+                                             B = 100, 
+                                             bootmethod = c("boot"), 
+                                             clustermethod = pamkCBI,
+                                             seed = 2025,
+                                             count = FALSE,
+                                             k = 4) 
+
+  temp <- res_post_noDM_stable_kmeans$bootresult %>% t() %>% data.frame() %>% 
+    dplyr::rename(
+      Cluster1 = X1,
+      Cluster2 = X2,
+      Cluster3 = X3,
+      Cluster4 = X4
+    )
+
+  # Using gather function to change wide data to long
+  temp_long <- gather(temp, Cluster, Value, Cluster1:Cluster4)
+  
+  # str(temp_long)
+  # Calculate mean, sd, se, and IC
+  temp_long <- temp_long  %>% 
+    dplyr::group_by(Cluster) %>% 
+    summarise(n = n(),
+              mean = mean(Value),
+              sd = sd(Value)) %>% 
+    mutate(se = sd/sqrt(n)) %>%
+    mutate(ic = se * qt((1-0.05)/2 + .5, n-1)) 
+  
+  ## Barplot
+  Jaccard_KM <- ggplot(temp_long, aes(x = Cluster, y = mean, fill = Cluster)) +
+    geom_bar(stat = "identity", alpha = 0.5, linewidth = 0.5) +
+    geom_errorbar(aes(x = Cluster, ymin = mean-ic, ymax = mean+ic), 
+                  linewidth = 0.5, 
+                  width = 0.2,
+                  color = "black", alpha = 0.6, size = 1) +
+    # scale_fill_manual(values = c("Cluster1" = "#aeeeee", 
+    #                           "Cluster2" = "#7dc3c3", 
+    #                           "Cluster3" = "#4a9dab", 
+    #                           "Cluster4" = "#3e796d")) +
+    labs(x = NULL, y = "Jaccard Index") + theme_bw() 
+  
+  Jaccard_plot[[stable_list]] <- Jaccard_KM
+}
+
+par(mfrow = c(1,2))
+combined_plot_J <- (Jaccard_plot[[1]] + ggtitle("Non-routine cluster variables") | Jaccard_plot[[2]] + 
+                      ggtitle("Routine cluster variables")) + 
+   plot_layout(guides = 'collect') &
+   theme(legend.position = 'bottom')
+
+combined_plot_J
+ggsave("./Results/plot_stability_v4.png", combined_plot_J, width = 10, height = 5, dpi = 500)
+
+```
+
+## select the key metabolites for high-risk groups
+
+```{r child = here::here("Scripts", "06_metabolomics.Rmd")}
+# see other .Rmd files
+```
+
+## select the key proteins for high-risk groups
+```{r child = here::here("Scripts", "07_proteomics.Rmd")}
+# see other .Rmd files
+```
+
+## other outputs
+```{r child = here::here("Scripts", "08_output.Rmd")}
+# 1. focus on the Radar plot
+# set.seed(1)
+# 
+# data_radar <- df_surv %>% select(c(c_name, bmim.x, glucose1, Matsuda, IR.x, TG_perc, MVAT, MSAT))
+# ### test
+# data_rp <- data.frame(
+#   row.names = c("Low risk", "Beta cell function failure", "Visceral fat","Insulin resistance fatty liver"),
+#   BMI = c(26.17, 29.14, 29.81, 32.31), # mean
+#   "Fasting glucose" = c(5.13, 5.57, 5.43, 6.03), # mean
+#   "Insulin sensitivity" = c(9.28, 5.11, 3.65, 2.71), # median
+#   "Insulin secretion" = c(0.24, 0.26, 0.47, 0.28), # median
+#   "Liver fat%" = c(1.87, 3.93, 5.69, 20.76), # median
+#   VAT = c(72.82, 106.42, 136.77, 180.80), # mean, 
+#   SAT = c(232.32, 305.43, 306.80, 345.58) # mean, Subcutaneous fat volume
+# )
+# 
+# max_min <- data.frame(
+#   BMI = c(45, 18),
+#   "Fasting glucose" = c(11, 3),
+#   "Insulin sensitivity" = c(28, 1),
+#   "Insulin secretion" = c(1, 0),
+#   "Liver fat%" = c(20, 0),
+#   VAT = c(200, 50),
+#   SAT = c(380, 150)
+# )
+# rownames(max_min) <- c("Max", "Min")
+# 
+# df_rp_test <- rbind(max_min, data_rp)
+# 
+# ## plot radar chart
+# # Define the colors
+# brighter_darker_colors <- c("#559E4B","#357ABD","#edbd08", "#734173")
+# 
+# # Use the defined colors for borders and fills with alpha transparency
+# colors_border <- brighter_darker_colors
+# colors_in <- sapply(brighter_darker_colors, function(col) adjustcolor(col, alpha.f = 0.3))
+#   
+# title <- c("Low risk", "Beta cell function failure","Visceral fat", "Insulin resistance fatty liver")
+# 
+# # for large sample size
+# set.seed(2)
+# ### test
+# data_rp_w <- data.frame(
+#   row.names = c("Low risk", "Beta cell function failure", "Visceral fat", "Insulin resistance fatty liver"),
+#   BMI = c(24.93, 29.46, 29.31, 35.37), # mean
+#   "Fasting glucose" = c(5.19, 5.80, 5.43, 5.76), # mean
+#   "Insulin sensitivity" = c(8.50,  2.78, 5.64, 3.43), # median
+#   "Insulin secretion" = c(0.28,  0.41, 0.27, 0.28), # median
+#   "Fasting TG" = c(0.82,1.93, 1.14, 1.44), # median
+#   "Hip circumference" = c(101, 108, 110, 121), # mean
+#   "Waist circumference" = c(87.3, 101.76, 100.41, 115.38) # mean
+# )
+# 
+# max_min_w <- data.frame(
+#   BMI = c(38, 25),
+#   "Fasting glucose" = c(6.5, 4),
+#   "Insulin sensitivity" = c(13, 2),
+#   "Insulin secretion" = c(1, 0),
+#   "Fasting TG" = c(2.5, 0.5),
+#   "Hip circumference" = c(135, 100),
+#   "Waist circumference" = c(125, 85)
+# )
+# rownames(max_min_w) <- c("Max", "Min")
+# 
+# df_rp_test_w <- rbind(max_min_w, data_rp_w)
+# 
+# # png(file = "./Results/Combined_radar_plots.png", 
+# #     width = 8, height = 10,  # Size in inches
+# #     units = "in",            # Specify units as inches
+# #     res = 500)              # Resolution in dpi (dots per inch)
+# 
+# pdf(file = "./Results/Combined_radar_plots.pdf", 
+#     width = 10,
+#     height = 13)
+# 
+# # par(mar = rep(0.8, 4))
+# par(mfrow = c(4, 2), 
+#     # outer margins
+#     oma = c(0, 0, 0, 0), 
+#     # inner margins
+#     mar = c(2, 2, 2, 2))
+# 
+# for(i in 1:4){
+#   
+#   # Custom the radarChart
+#   radarchart(df_rp_test[c(1,2,i+2),], # axistype=0, 
+#              
+#              #custom polygon
+#              pcol=colors_border[i], pfcol=colors_in[i], plwd=3, plty=1, pty = 32,
+#              
+#              #custom the grid
+#              cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8,
+#              
+#              #custom labels
+#              vlcex=0.8,
+#              
+#              #title
+#              title=title[i]
+#   )
+#   
+#   # Add 'A' label only to first plot
+#   if(i == 1) {
+#     mtext("A", side=3, line=-1.5, adj=0.02, cex=1.2, font = 2)
+#   }
+#   
+# }
+# 
+# for(i in 1:4){
+#   # Custom the radarChart
+#   radarchart(df_rp_test_w[c(1,2,i+2),], #axistype=0, 
+#              
+#              #custom polygon
+#              pcol=colors_border[i] , pfcol=colors_in[i] , plwd=3, plty=1 , pty = 32,
+#              
+#              #custom the grid
+#              cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8,
+#              
+#              #custom labels
+#              vlcex=0.8,
+#              
+#              #title
+#              title=title[i]
+#   )
+#   
+#   # Add 'B' label only to first plot
+#   if(i == 1) {
+#     mtext("B", side=3, line=-1.5, adj=0.02, cex=1.2, font = 2)
+#   }
+# }
+# 
+# dev.off()
+# 2. focus on the lifestyle factors
+
+```
+
+# comparison in the lifestyle factors
+
+```{r}
+load(file = "./Results/Survivial.Rdata")
+df_surv$mid_point <- as.numeric((df_surv$opstatijd-(df_surv$tijd_in_bed/2))/3600) # define midpoint of sleep
+
+df_surv$sleepduration <- as.integer(as.numeric(df_surv$sleepduration , units = "hours"))/3600  # hours
+
+# units(df_surv$sleepduration) <- "hours"
+df_surv$sleepduration
+
+
+# smoking status: 0: never smk, 1: former smk, 2: current smoker
+table_ls <- table1::table1( ~  factor(smoking) + dhd15_finalscore + alc_g + totmeth + leismeth + Pittstotal + mid_point + IDS_total_score + sleepduration | c_name, 
+                           data = df_surv,
+                           render.continuous = my.render.cont
+                           )
+table_ls |> as_tibble() |> write.xlsx("./Results/lifestyle_cluster_v4.xlsx")
+
+```
+
